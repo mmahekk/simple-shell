@@ -128,6 +128,12 @@ Command *parse_command(char *start, int num_args, Variable **variables) {
         cmd->args[i++] = strdup(token);
     }
     cmd->args[i] = NULL; // NULL terminate the array
+    cmd->next = NULL; // This is the last command in the list
+    cmd->stdin_fd = STDIN_FILENO;
+    cmd->stdout_fd = STDOUT_FILENO;
+    cmd->redir_in_path = NULL;
+    cmd->redir_out_path = NULL;
+    cmd->redir_append = 0;
 
     return cmd;
 }
@@ -193,8 +199,6 @@ Command *parse_line(char *line, Variable **variables) {
     if (!equalsPtr) {
         // first we need to check if we need to do variable replacement
         // this is done by checking if the line contains a '$'
-        // if it does, we need to replace the variables
-        // if it doesn't, we can just return the command
         if (strchr(start, '$')) {
             char *new_line = replace_variables_mk_line(start, *variables);
             if (new_line == NULL) {
@@ -282,11 +286,20 @@ char *replace_variables_mk_line(const char *line,
             if (is_braced && *var_end == '}') var_end++; // Include '}'
             if (is_braced && *var_end != '}') {
                 ERR_PRINT(ERR_VAR_USAGE);
-                return (char *) -1;
+                return NULL;
             }
 
             // Extract the variable name
-            size_t var_name_len = var_end - var_start - is_braced; // Subtract extra if braced
+            size_t var_name_len = var_end - var_start;
+            if (is_braced) {
+                if (var_name_len > 0) {
+                    var_name_len--; // Subtract extra if braced
+                } else {
+                    ERR_PRINT(ERR_VAR_USAGE);
+                    return NULL;
+                }
+            }        
+
             char var_name[var_name_len + 1]; // +1 for null terminator
             strncpy(var_name, var_start, var_name_len);
             var_name[var_name_len] = '\0';
@@ -305,7 +318,7 @@ char *replace_variables_mk_line(const char *line,
                 }
             } else {
                 ERR_PRINT(ERR_VAR_NOT_FOUND, var_name);
-                return (char *) -1;
+                return NULL;
             }
 
             ptr = var_end; // Move past the processed variable
@@ -334,9 +347,22 @@ char *replace_variables_mk_line(const char *line,
 
             // Adjust for the closing brace if variable name is enclosed
             if (is_braced && *var_end == '}') var_end++; // Include '}'
+            if (is_braced && *var_end != '}') {
+                ERR_PRINT(ERR_VAR_USAGE);
+                return NULL;
+            }
 
             // Extract the variable name
-            size_t var_name_len = var_end - var_start - is_braced; // Subtract extra if braced
+            size_t var_name_len = var_end - var_start;
+            if (is_braced) {
+                if (var_name_len > 0) {
+                    var_name_len--; // Subtract extra if braced
+                } else {
+                    ERR_PRINT(ERR_VAR_USAGE);
+                    return NULL;
+                }
+            }   
+            
             char var_name[var_name_len + 1]; // +1 for null terminator
             strncpy(var_name, var_start, var_name_len);
             var_name[var_name_len] = '\0';
@@ -349,7 +375,7 @@ char *replace_variables_mk_line(const char *line,
                 idx++;
             } else {
                 ERR_PRINT(ERR_VAR_NOT_FOUND, var_name);
-                return (char *) -1;
+                return NULL;
             }
 
             curr_line = var_end; // Move past the processed variable
