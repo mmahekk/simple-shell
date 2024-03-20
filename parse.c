@@ -119,6 +119,11 @@ Command *parse_command(char *start, int num_args, Variable **variables) {
 
     char *saveptr; // For use with strtok_r
     char *token = strtok_r(start, " ", &saveptr);
+    if (find_path_variable(*variables) == NULL) {
+        ERR_PRINT(ERR_EXECUTE_LINE);
+        return (Command *) -1;
+    }
+    
     cmd->exec_path = resolve_executable(token, find_path_variable(*variables));
     cmd->args[0] = strdup(token); // First arg is the command itself
 
@@ -250,6 +255,21 @@ Variable *find_variable(Variable *variables, const char *name) {
     return NULL;
 }
 
+const char *extract_var_name(const char *ptr, char *var_name) {
+    int is_braced = *(ptr + 1) == '{';
+    const char *var_start = ptr + (is_braced ? 2 : 1);
+    const char *var_end = var_start;
+
+    while (*var_end && (isalnum((unsigned char)*var_end) || *var_end == '_')) var_end++;
+    if (is_braced && *var_end != '}') return NULL;
+
+    size_t var_name_len = var_end - var_start;
+    strncpy(var_name, var_start, var_name_len);
+    var_name[var_name_len] = '\0';
+
+    return var_end + (is_braced ? 1 : 0);
+}
+
 /*
 ** This function is partially implemented for you, but you may
 ** scrap the implementation as long as it produces the same result.
@@ -260,174 +280,46 @@ Variable *find_variable(Variable *variables, const char *name) {
 ** Returns NULL if replacement parsing had an error, or (char *) -1 if
 ** system calls fail and the shell needs to exit.
 */
-char *replace_variables_mk_line(const char *line,
-                                Variable *variables){
-    // NULL terminator accounted for here
+char *replace_variables_mk_line(const char *line, Variable *variables) {
     size_t new_line_length = strlen(line) + 1;
-
-    // Code to determine new length: iterate over the line and count the number of replacements
-    int total_replacements = 0;
-    for (const char *ptr = line; *ptr; ) {
-        if (*ptr == '$') {
-            // Identify the start of the variable name
-            const char *var_start, *var_end;
-            int is_braced = *(ptr + 1) == '{';
-            if (is_braced) {
-                var_start = ptr + 2; // Skip past '${'
-            } else {
-                var_start = ptr + 1; // Skip past '$'
-            }
-
-            // Find the end of the variable name
-            var_end = var_start;
-            while (*var_end && (isalnum((unsigned char)*var_end) || *var_end == '_')) var_end++;
-
-            // Adjust for the closing brace if variable name is enclosed
-            if (is_braced && *var_end == '}') var_end++; // Include '}'
-            if (is_braced && *var_end != '}') {
-                ERR_PRINT(ERR_VAR_USAGE);
-                return NULL;
-            }
-
-            // Extract the variable name
-            size_t var_name_len = var_end - var_start;
-            if (is_braced) {
-                if (var_name_len > 0) {
-                    var_name_len--; // Subtract extra if braced
-                } else {
-                    ERR_PRINT(ERR_VAR_USAGE);
-                    return NULL;
-                }
-            }        
-
-            char var_name[var_name_len + 1]; // +1 for null terminator
-            strncpy(var_name, var_start, var_name_len);
-            var_name[var_name_len] = '\0';
-
-            // Find the variable's value
-            Variable *var = find_variable(variables, var_name);
-            if (var) {
-                // Calculate length difference
-                total_replacements++;
-                size_t var_value_len = strlen(var->value);
-                size_t var_total_len = var_end - ptr; // Total length of variable placeholder in the input line
-                if (var_total_len > var_value_len) {
-                    new_line_length -= var_total_len - var_value_len;
-                } else if (var_total_len < var_value_len) {
-                    new_line_length += var_value_len - var_total_len;
-                }
-            } else {
-                ERR_PRINT(ERR_VAR_NOT_FOUND, var_name);
-                return NULL;
-            }
-
-            ptr = var_end; // Move past the processed variable
-        } else {
-            ptr++; // Move to the next character
-        }
-    }
-
-    // now we do the same thing except we loop over the line, find variable values and add them to a list in order
-    // initialize a list that will hold the replacements in order
-    char *replacements[total_replacements];
-    int idx = 0;
-    for (const char *curr_line = line; *curr_line; ) {
-        if (*curr_line == '$') {
-            const char *var_start, *var_end;
-            int is_braced = *(curr_line + 1) == '{';
-            if (is_braced) {
-                var_start = curr_line + 2; // Skip past '${'
-            } else {
-                var_start = curr_line + 1; // Skip past '$'
-            }
-
-            // Find the end of the variable name
-            var_end = var_start;
-            while (*var_end && (isalnum((unsigned char)*var_end) || *var_end == '_')) var_end++;
-
-            // Adjust for the closing brace if variable name is enclosed
-            if (is_braced && *var_end == '}') var_end++; // Include '}'
-            if (is_braced && *var_end != '}') {
-                ERR_PRINT(ERR_VAR_USAGE);
-                return NULL;
-            }
-
-            // Extract the variable name
-            size_t var_name_len = var_end - var_start;
-            if (is_braced) {
-                if (var_name_len > 0) {
-                    var_name_len--; // Subtract extra if braced
-                } else {
-                    ERR_PRINT(ERR_VAR_USAGE);
-                    return NULL;
-                }
-            }   
-            
-            char var_name[var_name_len + 1]; // +1 for null terminator
-            strncpy(var_name, var_start, var_name_len);
-            var_name[var_name_len] = '\0';
-
-            // Find the variable's value
-            Variable *var = find_variable(variables, var_name);
-            if (var) {
-                // add var->name to the list of replacements
-                replacements[idx] = var->value;
-                idx++;
-            } else {
-                ERR_PRINT(ERR_VAR_NOT_FOUND, var_name);
-                return NULL;
-            }
-
-            curr_line = var_end; // Move past the processed variable
-        } else {
-            curr_line++; // Move to the next character
-        }
-    }
-
-    // then we can malloc the new line and fill it in with the markers and replacements
     char *new_line = (char *)malloc(new_line_length);
     if (new_line == NULL) {
         return (char *) -1;
     }
-    const char *ptr = line; // Pointer to iterate over the original line
-    int new_idx = 0; // Index for writing into new_line
-    int rep_idx = 0; // Index for accessing replacements array
+
+    const char *ptr = line;
+    int new_idx = 0;
 
     while (*ptr) {
         if (*ptr == '$') {
-            // Skip past the '$' and possibly '{'
-            if (*(ptr + 1) == '{') {
-                // If the next character is an opening brace,
-                // move the pointer two positions forward: over the '$' and '{'
-                ptr += 2;
+            char var_name[MAX_SINGLE_LINE];
+            ptr = extract_var_name(ptr, var_name);
+            if (ptr == NULL) {
+                ERR_PRINT(ERR_EXECUTE_LINE);
+                free(new_line);
+                return NULL;
+            }
+
+            Variable *var = find_variable(variables, var_name);
+            if (var) {
+                size_t var_value_len = strlen(var->value);
+                new_line = realloc(new_line, new_line_length - strlen(var_name) + var_value_len);
+                strcpy(new_line + new_idx, var->value);
+                new_idx += var_value_len;
             } else {
-                // If the next character is not an opening brace,
-                // move the pointer one position forward: just over the '$'
-                ptr += 1;
-            }
-            
-            // Skip the characters of the variable name
-            while (*ptr && (isalnum((unsigned char)*ptr) || *ptr == '_' || (*ptr == '}' && *(ptr - 1) != '{'))) {
-                ptr++;
-            }
-
-            // If the variable was enclosed in '{}', skip past the closing '}'
-            if (*ptr == '}') ptr++;
-
-            const char *replacement = replacements[rep_idx++]; // Get the next replacement value
-            while (*replacement) {
-                new_line[new_idx++] = *replacement++; // Copy replacement into new line
+                ERR_PRINT(ERR_EXECUTE_LINE);
+                free(new_line);
+                return NULL;
             }
         } else {
-            new_line[new_idx++] = *ptr++; // Directly copy non-variable characters
+            new_line[new_idx++] = *ptr++;
         }
     }
 
-    new_line[new_idx] = '\0'; // Null-terminate the new string
-
+    new_line[new_idx] = '\0';
     return new_line;
 }
-                
+
 void free_variable(Variable *var, uint8_t recursive) {
     // Check if the variable is NULL
     if (var == NULL) return;
