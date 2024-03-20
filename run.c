@@ -30,8 +30,62 @@ int cd_cscshell(const char *target_dir){
     return 0;
 }
 
+int *execute_line(Command *head) {
+    if (head == NULL) {
+        return NULL;
+    }
 
-int *execute_line(Command *head){
+    int *exit_status = malloc(sizeof(int));
+    if (exit_status == NULL) {
+        perror("malloc");
+        return NULL;
+    }
+
+    Command *cmd = head;
+    while (cmd != NULL) {
+        if (strcmp(cmd->args[0], "cd") == 0) {
+            // Handle cd command
+            char *path = cmd->args[1] ? cmd->args[1] : getpwuid(getuid())->pw_dir;
+            *exit_status = cd_cscshell(path);
+            if (*exit_status != 0) {
+                // cd command failed, stop executing the rest of the commands
+                break;
+            }
+        } else {
+            pid_t pid = fork();
+            if (pid < 0) {
+                perror("fork");
+                *exit_status = -1;
+                return exit_status;
+            } else if (pid == 0) {
+                // Child process
+                if (cmd->redir_in_path != NULL) {
+                    int fd = open(cmd->redir_in_path, O_RDONLY);
+                    if (fd < 0) {
+                        perror("open");
+                        exit(EXIT_FAILURE);
+                    }
+                    dup2(fd, STDIN_FILENO);
+                    close(fd);
+                }
+
+                execv(cmd->exec_path, cmd->args);
+                perror("execv");
+                exit(EXIT_FAILURE);
+            } else {
+                // Parent process
+                waitpid(pid, exit_status, 0);
+                if (WIFEXITED(*exit_status) && WEXITSTATUS(*exit_status) != 0) {
+                    // Command failed, stop executing the rest of the commands
+                    break;
+                }
+            }
+        }
+        cmd = cmd->next;
+    }
+
+    return exit_status;
+
     #ifdef DEBUG
     printf("\n***********************\n");
     printf("BEGIN: Executing line...\n");
@@ -51,10 +105,7 @@ int *execute_line(Command *head){
     printf("END: Executing line...\n");
     printf("***********************\n\n");
     #endif
-
-    return NULL;
 }
-
 
 /*
 ** Forks a new process and execs the command
@@ -64,7 +115,7 @@ int *execute_line(Command *head){
 ** Any child processes should not return.
 */
 int run_command(Command *command){
-    pid_t pid; // added for now
+    pid_t pid = fork(); // added for now
     #ifdef DEBUG
     printf("Running command: %s\n", command->exec_path);
     printf("Argvs: ");
@@ -91,52 +142,40 @@ int run_command(Command *command){
     printf("Parent process created child PID [%d] for %s\n", pid, command->exec_path);
     #endif
     return -1;
-    pid = getpid();
+    if (pid < 0) {
+        perror("fork");
+        return -1;
+    } else if (pid == 0) {
+        // Child process
+        if (command->redir_in_path != NULL) {
+            int fd = open(command->redir_in_path, O_RDONLY);
+            if (fd < 0) {
+                perror("open");
+                exit(EXIT_FAILURE);
+            }
+            dup2(fd, STDIN_FILENO);
+            close(fd);
+        }
+
+        execv(command->exec_path, command->args);
+        perror("execv");
+        exit(EXIT_FAILURE);
+    } else {
+        // Parent process
+        return pid;
+    }
 }
 
 
-int run_script(char *file_path, Variable **root) {
-    // Open the script file for reading
-    // FILE *file = fopen(file_path, "r");
-    // if (!file) {
-    //     perror("fopen");
-    //     return -1; // Error opening file
-    // }
-
-    // char line[MAX_SINGLE_LINE];
-    // int line_number = 0;
-    // int ret_code = 0; // Assume success, unless an error occurs
-
-    // // Read the script file line by line
-    // while (fgets(line, sizeof(line), file)) {
-    //     line_number++;
-    //     line[strcspn(line, "\n")] = '\0'; // Remove the newline character at the end of the line
-
-    //     // Parse the line into commands
-    //     Command *commands = parse_line(line, root);
-    //     if (commands == (Command *) -1){
-    //         fprintf(stderr, "Error parsing line %d: %s\n", line_number, line);
-    //         ret_code = -1; // Indicate error
-    //         continue; // Skip to the next line
-    //     }
-    //     if (commands == NULL) continue; // Skip lines that do not contain commands
-
-    //     // Execute the parsed commands
-    //     int *last_ret_code_pt = execute_line(commands);
-    //     if (last_ret_code_pt == (int *) -1){
-    //         fprintf(stderr, "Error executing line %d: %s\n", line_number, line);
-    //         free(last_ret_code_pt); // Make sure to free any allocated memory
-    //         ret_code = -1; // Indicate error
-    //         break; // Stop execution on error
-    //     }
-    //     // Clean up after executing the line
-    //     free(last_ret_code_pt);
-    //     // Also, free the commands parsed for this line
-    //     free_command(commands);
-    // }
-
-    // fclose(file); // Close the script file
-    // return ret_code; // Return the final execution status
+int run_script(char *file_path, Variable **root){
+    FILE *file = fopen(file_path, "r");
+    if (file == NULL){
+        fprintf(stderr, ERR_INIT_SCRIPT, file_path);
+        return -1;
+    }
+    char line[MAX_SINGLE_LINE +1];
+    fgets(line, MAX_SINGLE_LINE, file);
+    return 0;
 }
 
 
